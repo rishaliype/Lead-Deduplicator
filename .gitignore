@@ -1,0 +1,16 @@
+*.class
+target/
+
+deduplicated_leads.json
+changes.log
+
+.DS_Store
+
+.vscode/
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+
+dependency-reduced-pom.xml
