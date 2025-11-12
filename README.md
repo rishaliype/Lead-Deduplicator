@@ -79,7 +79,7 @@ Output: [id=1, email=b@test.com, date=Jan 2]
 
 ### Optimized Implementation: Intersection Approach
 
-Available in the [`optimized-intersection-approach`](../tree/optimized-intersection-approach) branch.
+Available in the [`optimized-intersection-approach`](https://github.com/rishaliype/Lead-Deduplicator/tree/optimized-intersection-approach) branch.
 
 **Data Structures:**
 - `Map<String, Lead>` for ID retention - maps each unique ID to its current retained lead
