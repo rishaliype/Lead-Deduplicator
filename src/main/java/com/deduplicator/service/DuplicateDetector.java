@@ -2,7 +2,6 @@ package com.deduplicator.service;
 
 import com.deduplicator.logging.ChangeLog;
 import com.deduplicator.model.Lead;
-import com.deduplicator.model.LeadEntry;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -15,7 +14,11 @@ public class DuplicateDetector {
 
     public List<Lead> process(List<Lead> leads, ChangeLog changeLog) {
 
-        List<LeadEntry> entries = new ArrayList<>();
+        //Determine winner for each ID
+        Map<String, Lead> idWinners = new HashMap<>();
+        //Determine winner for each email
+        Map<String, Lead> emailWinners = new HashMap<>();
+
         for (int i = 0; i < leads.size(); i++) {
             Lead lead = leads.get(i);
             //Validation for id, email and date
@@ -28,101 +31,83 @@ public class DuplicateDetector {
             if (lead.getParsedDate() == null) {
                 throw new IllegalArgumentException("Lead at index " + i + " has null or unparseable date");
             }
-            entries.add(new LeadEntry(leads.get(i), i));
-        }
-        
-        //Group duplicates together
-        Map<String, List<LeadEntry>> groupById = new HashMap<>();
-        Map<String, List<LeadEntry>> groupByEmail = new HashMap<>();
-        
-        for (LeadEntry entry : entries) {
-            String id = entry.lead.getId();
-            String email = entry.lead.getEmail();
-            
-            if (!groupById.containsKey(id)) {
-                groupById.put(id, new ArrayList<>());
+
+            String id = lead.getId();
+            String email = lead.getEmail();
+
+            if (!idWinners.containsKey(id)) {
+                idWinners.put(id, lead);
+            } else {
+                Lead current = idWinners.get(id);
+                if (isBetter(lead, current)) {
+                    //New lead wins. Log the loser and replace
+                    boolean sameEmail = lead.getEmail().equals(current.getEmail());
+                    String reason = sameEmail 
+                        ? "Duplicate ID '" + id + "' and email '" + lead.getEmail() + "'"
+                        : "Duplicate ID '" + id + "'";
+                    changeLog.recordChange(current, lead, reason);
+                    idWinners.put(id, lead);
+                } else {
+                    //Current winner stays. Log the new entry as loser
+                    boolean sameEmail = lead.getEmail().equals(current.getEmail());
+                    String reason = sameEmail 
+                        ? "Duplicate ID '" + id + "' and email '" + lead.getEmail() + "'"
+                        : "Duplicate ID '" + id + "'";
+                    changeLog.recordChange(lead, current, reason);
+                }
             }
-            groupById.get(id).add(entry);
-            
-            if (!groupByEmail.containsKey(email)) {
-                groupByEmail.put(email, new ArrayList<>());
-            }
-            groupByEmail.get(email).add(entry);
-        }
-        
-        //Find losers
-        Set<LeadEntry> losers = new HashSet<>();
-        
-        //Pick winner for each ID group with duplicates
-        for (List<LeadEntry> group : groupById.values()) {
-            if (group.size() > 1) {
-                LeadEntry winner = pickWinner(group);
-                for (LeadEntry loser : group) {
-                    if (loser != winner) {
-                        losers.add(loser);
-                        // Check if they also share same email for logging
-                        boolean sameEmail = loser.lead.getEmail().equals(winner.lead.getEmail());
-                        String reason = sameEmail 
-                            ? "Duplicate ID '" + loser.lead.getId() + "' and email '" + loser.lead.getEmail() + "'"
-                            : "Duplicate ID '" + loser.lead.getId() + "'";
-                        
-                        changeLog.recordChange(loser.lead, winner.lead, reason);
+
+            if (!emailWinners.containsKey(email)) {
+                emailWinners.put(email, lead);
+            } else {
+                Lead current = emailWinners.get(email);
+                if (isBetter(lead, current)) {
+                    //New entry wins. Only log if they don't share the same ID (ID winner processing already logged that. Avoid duplicate logging)
+                    boolean sameId = lead.getId().equals(current.getId());
+                    if (!sameId) {
+                        changeLog.recordChange(current, lead, "Duplicate email '" + email + "'");
+                    }
+                    emailWinners.put(email, lead);
+                } else {
+                    //Current winner stays
+                    boolean sameId = lead.getId().equals(current.getId());
+                    if (!sameId) {
+                        changeLog.recordChange(lead, current, "Duplicate email '" + email + "'");
                     }
                 }
             }
         }
-        
-        //Pick winner for each email group with duplicates
-        for (List<LeadEntry> group : groupByEmail.values()) {
-            if (group.size() > 1) {
-                LeadEntry winner = pickWinner(group);
-                for (LeadEntry loser : group) {
-                    if (loser != winner) {
-                        losers.add(loser);
-                        //Only log if they don't share the same ID (otherwise already logged above)
-                        boolean sameId = loser.lead.getId().equals(winner.lead.getId());
-                        if (!sameId) {
-                            changeLog.recordChange(loser.lead, winner.lead, 
-                                "Duplicate email '" + loser.lead.getEmail() + "'");
-                        }
-                    }
-                }
-            }
-        }
-        
+
         List<Lead> result = new ArrayList<>();
-        for (LeadEntry entry : entries) {
-            if (!losers.contains(entry)) {
-                result.add(entry.lead);
+
+        if (idWinners.size() <= emailWinners.size()) {
+            for (Lead lead : idWinners.values()) {
+                //Check intersection
+                Lead emailWinner = emailWinners.get(lead.getEmail());
+                if (emailWinner == lead) {
+                    result.add(lead);
+                }
+            }
+        } else {
+            for (Lead lead : emailWinners.values()) {
+                //Check intersection
+                Lead idWinner = idWinners.get(lead.getId());
+                if (idWinner == lead) {
+                    result.add(lead);
+                }
             }
         }
-        
+
         return result;
     }
     
-    private LeadEntry pickWinner(List<LeadEntry> candidates) {
-        LeadEntry winner = candidates.get(0);
+    private boolean isBetter(Lead candidate, Lead current) {
+        int dateCompare = candidate.getParsedDate().compareTo(current.getParsedDate());
         
-        for (LeadEntry candidate : candidates) {
-            if (isBetter(candidate, winner)) {
-                winner = candidate;
-            }
+        if (dateCompare >= 0) {//Newer or same date
+            return true; //Candidate wins since it is a newer date or later in the list in case of tie
         }
-        
-        return winner;
-    }
-    
-    private boolean isBetter(LeadEntry candidate, LeadEntry current) {
-        int dateCompare = candidate.lead.getParsedDate().compareTo(current.lead.getParsedDate());
-        
-        if (dateCompare > 0) {
-            return true; //Newer date wins
-        }
-        
-        if (dateCompare == 0 && candidate.index > current.index) {
-            return true; //Same date so later in list wins
-        }
-        
+               
         return false;
     }
 }
